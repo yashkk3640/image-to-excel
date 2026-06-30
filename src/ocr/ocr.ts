@@ -19,10 +19,18 @@ function getWorker(): Promise<Worker> {
   return workerPromise;
 }
 
+export interface OcrWord {
+  text: string;
+  /** Per-word confidence, 0..100. */
+  confidence: number;
+}
+
 export interface OcrResult {
   text: string;
-  /** Tesseract mean confidence, 0..100. */
+  /** Tesseract mean confidence over all tokens, 0..100 (includes UI noise). */
   confidence: number;
+  /** Per-word results, used to score individual extracted fields. */
+  words: OcrWord[];
 }
 
 export async function runOcr(image: Blob, onProgress?: (p: number) => void): Promise<OcrResult> {
@@ -30,7 +38,8 @@ export async function runOcr(image: Blob, onProgress?: (p: number) => void): Pro
   try {
     const worker = await getWorker();
     const { data } = await worker.recognize(image);
-    return { text: data.text, confidence: data.confidence };
+    const words: OcrWord[] = (data.words ?? []).map((w) => ({ text: w.text, confidence: w.confidence }));
+    return { text: data.text, confidence: data.confidence, words };
   } finally {
     progressCb = null;
   }

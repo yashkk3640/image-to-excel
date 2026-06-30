@@ -72,8 +72,10 @@ function extractRecipient(text: string): string {
 
 function extractDateTime(text: string): string {
   const date = firstMatch(text, [
-    new RegExp(`\\b(\\d{1,2}\\s+(?:${MONTHS})[a-z]*\\.?,?\\s*\\d{2,4})`, 'i'),
-    new RegExp(`\\b((?:${MONTHS})[a-z]*\\.?\\s+\\d{1,2},?\\s*\\d{2,4})`, 'i'),
+    // Day-month ("24 Jun 2026", "24 Jun") and month-day ("May 18, 2026",
+    // "May 18") — the year is optional in both.
+    new RegExp(`\\b(\\d{1,2}\\s+(?:${MONTHS})[a-z]*\\.?(?:,?\\s*\\d{2,4})?)`, 'i'),
+    new RegExp(`\\b((?:${MONTHS})[a-z]*\\.?\\s+\\d{1,2}(?:,?\\s*\\d{2,4})?)`, 'i'),
     /\b(\d{4}-\d{2}-\d{2})/,
     /\b(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})/,
   ]);
@@ -105,8 +107,10 @@ function extractNote(text: string): string {
   // "Completed"/"successful" status. Take the nearest non-empty line before it;
   // if that line is itself a known field, there is no note.
   const lines = text.split('\n').map((l) => l.trim());
+  // Match the status word anywhere in the line — OCR often prefixes the green
+  // check as junk, e.g. "© Completed • May 18".
   const statusIdx = lines.findIndex((l) =>
-    /^(completed|payment successful|paid successfully|transaction successful|success(ful)?)\b/i.test(l),
+    /\b(completed|payment successful|paid successfully|transaction successful)\b/i.test(l),
   );
   if (statusIdx > 0) {
     for (let i = statusIdx - 1; i >= 0; i--) {
