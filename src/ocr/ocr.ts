@@ -23,6 +23,8 @@ export interface OcrWord {
   text: string;
   /** Per-word confidence, 0..100. */
   confidence: number;
+  /** Pixel bounding box, used to find the largest text (the amount). */
+  bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
 export interface OcrResult {
@@ -38,7 +40,11 @@ export async function runOcr(image: Blob, onProgress?: (p: number) => void): Pro
   try {
     const worker = await getWorker();
     const { data } = await worker.recognize(image);
-    const words: OcrWord[] = (data.words ?? []).map((w) => ({ text: w.text, confidence: w.confidence }));
+    const words: OcrWord[] = (data.words ?? []).map((w) => ({
+      text: w.text,
+      confidence: w.confidence,
+      bbox: { x0: w.bbox.x0, y0: w.bbox.y0, x1: w.bbox.x1, y1: w.bbox.y1 },
+    }));
     return { text: data.text, confidence: data.confidence, words };
   } finally {
     progressCb = null;

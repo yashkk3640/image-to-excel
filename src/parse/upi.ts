@@ -1,7 +1,15 @@
-// Dedicated parser for UPI payment confirmation screenshots from the major
-// Indian apps (Google Pay, PhonePe, Paytm, PayZapp). Each app lays its screen
-// out differently, so per-field we try several patterns in priority order
-// rather than one rigid regex. Pure functions, no IO.
+// Parser for UPI payment confirmation screenshots (Google Pay, PhonePe, Paytm,
+// PayZapp, ...). Rather than encode each app's layout — which breaks whenever an
+// app is redesigned — we extract each field by an *invariant* that holds across
+// apps and versions:
+//   amount        -> the largest money-shaped text on screen (geometry)
+//   transactionId -> the longest id near an id/ref/UTR keyword (universal terms)
+//   datetime      -> universal date/time patterns (not app-specific)
+//   recipient     -> the name after "to / paid to / sent to" (shared UPI vocab)
+//   note          -> the leftover free-text line
+// Pure functions, no IO.
+
+import type { OcrWord } from '../ocr/ocr';
 
 export interface UpiFields {
   provider: string;
@@ -32,31 +40,57 @@ function detectProvider(text: string): string {
   return '';
 }
 
-function extractAmount(text: string): string {
-  // 1. Amount marked by a currency symbol (the ₹ glyph often OCRs poorly, so
-  //    accept Rs / INR too).
+// A money value has at most 7 integer digits (so it can't be a 10-digit phone
+// or a 12-digit transaction id) and optional 1-2 decimals. Currency symbols and
+// thousands separators are stripped first.
+function moneyString(raw: string): string | null {
+  const s = raw.replace(/[^\d.]/g, '');
+  if (!/^\d{1,7}(\.\d{1,2})?$/.test(s)) return null;
+  return Number(s) > 0 ? s : null;
+}
+
+function extractAmount(text: string, words: OcrWord[]): string {
+  // Invariant: the amount is the largest money-shaped text on the screen. Using
+  // glyph height (not position or the ₹ symbol) makes this survive redesigns
+  // and OCR dropping the currency glyph.
+  const heights = words
+    .map((w) => w.bbox.y1 - w.bbox.y0)
+    .filter((h) => h > 0)
+    .sort((a, b) => a - b);
+  const median = heights.length ? heights[Math.floor(heights.length / 2)] : 0;
+
+  let best: { val: string; h: number } | null = null;
+  for (const w of words) {
+    const val = moneyString(w.text);
+    if (!val) continue;
+    const h = w.bbox.y1 - w.bbox.y0;
+    if (!best || h > best.h) best = { val, h };
+  }
+  // Require the candidate to be clearly larger than body text, so we never
+  // mistake a small phone/date fragment for the amount when the real amount
+  // wasn't read — better to leave it blank for review.
+  if (best && median > 0 && best.h >= median * 1.5) return best.val;
+
+  // Fallback when geometry is unavailable: an explicit currency-marked value.
   const sym = /(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i.exec(text);
   if (sym) return sym[1].replace(/,/g, '');
-
-  const labelled = /amount\s*[:\-]?\s*(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i.exec(text);
-  if (labelled) return labelled[1].replace(/,/g, '');
-
-  // 2. Fallback: a line that is *only* a number — the headline amount with the
-  //    currency glyph dropped by OCR. Bounded to <=7 digits so it can't match a
-  //    12-digit transaction id or a phone number.
-  for (const raw of text.split('\n')) {
-    const m = /^\s*₹?\s*([0-9]{1,3}(?:,[0-9]{2,3})+(?:\.[0-9]{1,2})?|[0-9]{1,6}(?:\.[0-9]{1,2})?)\s*$/.exec(raw.trim());
-    if (m && m[1].replace(/[,.]/g, '').length <= 7) return m[1].replace(/,/g, '');
-  }
   return '';
 }
 
 function extractTransactionId(text: string): string {
-  return firstMatch(text, [
+  // Prefer an id next to a universal keyword (these terms are stable across
+  // apps even when layouts change).
+  const labelled = firstMatch(text, [
     /(?:upi\s*(?:transaction\s*id|ref(?:erence)?\s*(?:no\.?|id|number)?))\s*[:\-]?\s*([A-Za-z0-9]{8,30})/i,
     /(?:transaction\s*id|txn\s*id|order\s*id|google\s*transaction\s*id|reference\s*(?:id|number|no\.?))\s*[:\-]?\s*([A-Za-z0-9]{8,30})/i,
     /\butr\b\s*[:\-]?\s*([0-9]{10,22})/i,
   ]);
+  if (labelled) return labelled;
+
+  // Fallback invariant: the longest 12+ digit run (UPI ref / UTR are always
+  // long numbers), avoiding shorter phone-length numbers.
+  const runs = text.match(/\d{12,22}/g);
+  return runs ? runs.sort((a, b) => b.length - a.length)[0] : '';
 }
 
 function extractRecipient(text: string): string {
@@ -121,11 +155,11 @@ function extractNote(text: string): string {
   return '';
 }
 
-export function parseUpi(text: string): UpiFields {
+export function parseUpi(text: string, words: OcrWord[] = []): UpiFields {
   return {
     provider: detectProvider(text),
     recipient: extractRecipient(text),
-    amount: extractAmount(text),
+    amount: extractAmount(text, words),
     transactionId: extractTransactionId(text),
     datetime: extractDateTime(text),
     note: extractNote(text),

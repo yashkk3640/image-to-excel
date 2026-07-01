@@ -69,7 +69,8 @@ function assemble(
 // confidence. Either delegates to a built-in parser or runs each field's regex.
 export function applyTemplate(ocr: OcrResult, template: Template): ParsedRecord {
   if (template.parser === 'upi') {
-    return assemble(template, ocr, parseUpi(ocr.text) as unknown as Record<string, string>, new Set(['provider']));
+    const parsed = parseUpi(ocr.text, ocr.words) as unknown as Record<string, string>;
+    return assemble(template, ocr, parsed, new Set(['provider']));
   }
 
   const raw: Record<string, string> = {};
