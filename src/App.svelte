@@ -4,7 +4,7 @@
   import ReviewTable from './ui/ReviewTable.svelte';
   import TemplateEditor from './ui/TemplateEditor.svelte';
   import { normalizeImage } from './ingest/normalizeImage';
-  import { runOcr } from './ocr/ocr';
+  import { recognize, type OcrEngine } from './ocr/ocr';
   import { applyTemplate } from './parse/applyTemplate';
   import { ensureTemplates, allTemplates } from './store/templates';
   import { addRecord, saveRecord, deleteRecord, allRecords } from './store/records';
@@ -18,6 +18,10 @@
   let records: AppRecord[] = [];
   let selectedMonth = 'all';
   let showEditor = false;
+  // OCR engine: Tesseract (default, light) or PaddleOCR (opt-in, ~20 MB, higher
+  // accuracy). Persisted so the choice sticks across sessions.
+  let engine: OcrEngine = (localStorage.getItem('ocrEngine') as OcrEngine) || 'tesseract';
+  $: localStorage.setItem('ocrEngine', engine);
 
   let busy = false;
   let progressLabel = '';
@@ -66,7 +70,7 @@
         progressLabel = `Processing ${i + 1} of ${files.length}…`;
         progress = 0;
         const normalized = await normalizeImage(files[i]);
-        const ocr = await runOcr(normalized, (p) => (progress = p));
+        const ocr = await recognize(normalized, engine, (p) => (progress = p));
         const parsed = applyTemplate(ocr, activeTemplate);
         const now = new Date().toISOString();
         const record: AppRecord = {
@@ -149,6 +153,16 @@
       </div>
       <span class="muted">{usageText}{persisted ? ' · persisted' : ''}</span>
     </div>
+    <div class="row engine">
+      <label title="PaddleOCR is far more accurate on payment screenshots but downloads ~20 MB the first time you use it (cached afterwards).">
+        <input type="checkbox" checked={engine === 'paddle'} disabled={busy}
+          on:change={(e) => (engine = e.currentTarget.checked ? 'paddle' : 'tesseract')} />
+        High-accuracy OCR (PaddleOCR)
+      </label>
+      <span class="muted">
+        {engine === 'paddle' ? 'Downloads ~20 MB on first use, then works offline.' : 'Fast, lightweight. Enable high-accuracy for hard-to-read amounts.'}
+      </span>
+    </div>
     {#if showEditor}
       <div class="editor-wrap">
         <TemplateEditor {templates} on:change={reloadTemplates} />
@@ -199,6 +213,8 @@
   label { display: inline-flex; gap: 0.4rem; align-items: center; }
   .spread { justify-content: space-between; }
   .editor-wrap { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  .engine { margin-top: 0.75rem; font-size: 0.9rem; }
+  .engine label { gap: 0.45rem; cursor: pointer; }
   .progress { margin-top: 1rem; }
   .bar { height: 8px; background: #0c0e13; border-radius: 999px; overflow: hidden; margin-top: 0.35rem; }
   .fill { height: 100%; background: var(--accent); transition: width 0.2s; }
